@@ -7,14 +7,16 @@ const COOKIE = 'cls_auth'
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // Allow the login page and its POST through
-  if (pathname === '/login') return NextResponse.next()
+  // Always allow login page and auth API through
+  if (pathname === '/login' || pathname.startsWith('/api/auth/')) {
+    return NextResponse.next()
+  }
 
   // Check auth cookie
   const auth = req.cookies.get(COOKIE)?.value
   if (auth === PASSWORD) return NextResponse.next()
 
-  // Redirect to login, preserving intended destination
+  // Redirect to login
   const url = req.nextUrl.clone()
   url.pathname = '/login'
   url.searchParams.set('from', pathname)
