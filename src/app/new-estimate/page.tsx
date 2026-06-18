@@ -1,6 +1,7 @@
 'use client'
-import { useState, useCallback } from 'react'
-import { Trash2, Plus, Save, FileText, Mail, Sparkles } from 'lucide-react'
+import { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { Trash2, Plus, Save, FileText, Mail, Sparkles, Loader2 } from 'lucide-react'
 
 const MATERIALS = [
   { label: '3M Vinyl — 48" roll (per ft)', cost: 14 },
@@ -12,13 +13,7 @@ const MATERIALS = [
   { label: 'Labor (custom rate)', cost: 95 },
 ]
 
-const CUSTOMERS = [
-  'Mercy Hospital — Sandra Mejia',
-  'Valley Auto Group — Derek Walsh',
-  'Eastside Brewing Co. — Kira Patel',
-  'Sun Pacific Realty — James Ortiz',
-  'TechSpace Cowork — Priya Nair',
-]
+type Customer = { id: string; name: string; company: string | null }
 
 type Line = {
   id: number
@@ -36,9 +31,26 @@ const defaultLines: Line[] = [
 let nextId = 3
 
 export default function NewEstimate() {
+  const router = useRouter()
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [customerId, setCustomerId] = useState('')
+  const [description, setDescription] = useState('')
+  const [validUntil, setValidUntil] = useState('')
+  const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<Line[]>(defaultLines)
   const [status, setStatus] = useState('draft')
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [loadingCustomers, setLoadingCustomers] = useState(true)
+
+  useEffect(() => {
+    fetch('/api/customers')
+      .then(res => res.json())
+      .then(data => Array.isArray(data) ? setCustomers(data) : setCustomers([]))
+      .catch(() => setCustomers([]))
+      .finally(() => setLoadingCustomers(false))
+  }, [])
 
   const updateLine = useCallback((id: number, field: keyof Line, value: string | number) => {
     setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l))
@@ -58,44 +70,102 @@ export default function NewEstimate() {
   const total = subtotal + tax
   const deposit = total * 0.5
   const cost = lines.reduce((sum, l) => sum + l.qty * l.unitCost, 0)
-  const margin = cost > 0 ? Math.round(((subtotal - cost) / subtotal) * 100) : 0
-
-  const handleSave = () => {
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
-  }
+  const margin = subtotal > 0 ? Math.round(((subtotal - cost) / subtotal) * 100) : 0
 
   const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  async function handleSave() {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const payload = {
+        customer_id: customerId || null,
+        description,
+        status,
+        valid_until: validUntil || null,
+        notes: notes || null,
+        tax_rate: 0.0925,
+        deposit_pct: 0.5,
+        lines: lines.map((l, i) => ({
+          description: l.description,
+          quantity: l.qty,
+          unit_cost: l.unitCost,
+          markup: l.markup,
+          sort_order: i,
+        })),
+      }
+      const res = await fetch('/api/estimates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to save estimate')
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      router.push('/estimates')
+    } catch (e: any) {
+      setSaveError(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div>
       <div className="bg-white border-b border-gray-100 px-6 py-3.5 flex items-center justify-between">
         <h1 className="text-[15px] font-semibold">New Estimate</h1>
-        <span className="text-xs text-gray-400">#0025 — Draft</span>
+        <span className="text-xs text-gray-400">Draft — not yet saved</span>
       </div>
 
       <div className="p-6 grid grid-cols-[1fr_320px] gap-5">
-        {/* LEFT COLUMN */}
         <div className="space-y-5">
-          {/* Customer */}
           <div className="bg-white rounded-xl border border-gray-100 p-5">
             <h2 className="text-sm font-medium mb-3">Customer</h2>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Customer</label>
-                <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-green-600">
-                  <option>Select or add new…</option>
-                  {CUSTOMERS.map(c => <option key={c}>{c}</option>)}
-                  <option>+ Add new customer</option>
-                </select>
+                {loadingCustomers ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                    <Loader2 size={13} className="animate-spin" /> Loading…
+                  </div>
+                ) : (
+                  <select
+                    value={customerId}
+                    onChange={e => setCustomerId(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-green-600"
+                  >
+                    <option value="">No customer selected</option>
+                    {customers.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.company ? `${c.company} — ${c.name}` : c.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {!loadingCustomers && customers.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1">No customers yet — add one from the Customers page first.</p>
+                )}
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Job description</label>
-                <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-green-600" placeholder="e.g. Exterior channel letters" />
+                <input
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-green-600"
+                  placeholder="e.g. Exterior channel letters"
+                />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Valid until</label>
-                <input type="date" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-green-600" />
+                <input
+                  type="date"
+                  value={validUntil}
+                  onChange={e => setValidUntil(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-green-600"
+                />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Status</label>
@@ -109,7 +179,6 @@ export default function NewEstimate() {
             </div>
           </div>
 
-          {/* Line Items */}
           <div className="bg-white rounded-xl border border-gray-100 p-5">
             <h2 className="text-sm font-medium mb-3">Line items</h2>
             <div className="grid grid-cols-[2fr_60px_90px_100px_90px_36px] gap-2 mb-1.5 px-1">
@@ -171,10 +240,11 @@ export default function NewEstimate() {
             </button>
           </div>
 
-          {/* Notes */}
           <div className="bg-white rounded-xl border border-gray-100 p-5">
             <h2 className="text-sm font-medium mb-3">Customer-facing notes</h2>
             <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
               rows={3}
               placeholder="Appears on the estimate PDF…"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-green-600 resize-none"
@@ -182,9 +252,7 @@ export default function NewEstimate() {
           </div>
         </div>
 
-        {/* RIGHT COLUMN */}
         <div className="space-y-4">
-          {/* Totals */}
           <div className="bg-white rounded-xl border border-gray-100 p-5">
             <h2 className="text-sm font-medium mb-3">Totals</h2>
             <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
@@ -206,14 +274,17 @@ export default function NewEstimate() {
             </div>
           </div>
 
-          {/* Actions */}
           <div className="space-y-2">
+            {saveError && (
+              <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{saveError}</div>
+            )}
             <button
               onClick={handleSave}
-              className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors ${saved ? 'bg-green-700 text-white' : 'bg-green-700 text-white hover:bg-green-800'}`}
+              disabled={saving}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors bg-green-700 text-white hover:bg-green-800 disabled:opacity-60"
             >
-              <Save size={15} />
-              {saved ? 'Saved!' : 'Save estimate'}
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+              {saving ? 'Saving…' : saved ? 'Saved!' : 'Save estimate'}
             </button>
             <button className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm border border-gray-200 hover:bg-gray-50 transition-colors">
               <FileText size={15} className="text-gray-500" /> Generate PDF
